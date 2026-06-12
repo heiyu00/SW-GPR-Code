@@ -14,7 +14,6 @@ import os
 import cma
 from sklearn.preprocessing import MinMaxScaler
 
-#从file_path读取特征
 def getdata(file_path):
     all_data = pd.DataFrame()
     all_data = pd.read_excel(file_path)
@@ -57,7 +56,6 @@ class GPR:
         self.weightlimit = limit
 
 
-        # 对数似然函数定义
         def negative_log_likelihood_loss(params):
             
             self.lambda_matrix = np.diag(np.hstack((self.weight, np.ones(n_target))))
@@ -120,28 +118,13 @@ class GPR:
         dist_matrix = np.sum(x1**2, 1).reshape(-1, 1) + np.sum(x2**2, 1) - 2 * np.dot(x1, x2.T)
         return self.params["sigma_f"] ** 2 * np.exp(-0.5 / self.params["l"] ** 2 * dist_matrix)
 
-def drow_weight(weight):
-    transparency = 1
-    plt.figure()
-    plt.plot(range(len(weight)), weight, label='weighty', marker='')
-    
-    # 设置标题和标签
-    plt.legend()
-    plt.title('weight')
-    plt.xlabel('Cycle number')
-    plt.ylabel('weight')
-    plt.ylim([0, 1.0])
-    plt.show()
 
-# 设置显示中文字体
+
 mpl.rcParams["font.sans-serif"] = ["SimHei"]
-# 设置正常显示符号
 mpl.rcParams["axes.unicode_minus"] = False
-# 忽略 ConvergenceWarning 警告
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 warnings.filterwarnings("ignore", message="Sampling standard deviation")
 
-#读取数据
 base_dir = os.path.dirname(os.path.abspath(__file__))
 file_path1 = os.path.join(base_dir, 'feature', 'nasa', 'B0005.xlsx')
 file_path2 = os.path.join(base_dir, 'feature', 'nasa', 'B0006.xlsx')
@@ -175,10 +158,8 @@ yt = scaleryt.fit_transform(yt)
 ys = ys.reshape(-1)
 yt = yt.reshape(-1)
 
-#设置目标域训练集
 Xt_train, Xt_test, yt_train, yt_test = train_test_split(Xt, yt, test_size=target_train_size, random_state=42)
 
-#合并数据集
 X_train = Xs
 y_train = ys
 X_train2 = np.vstack((Xs, Xt_train))
