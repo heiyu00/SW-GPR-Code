@@ -142,9 +142,8 @@ X2, y2 = getdata(file_path3)
 X3, y3 = getdata(file_path4)
 Xt, yt = getdata(file_path2)
 
-Xs = X3
-ys = y3
-print(ys.shape)
+Xs = X1
+ys = y1
 weight_limit = 1
 label = 'B0005->B0006'
 scalerXs = MinMaxScaler(feature_range=(0, 1))
