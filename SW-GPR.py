@@ -13,6 +13,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import os
 import cma
 from sklearn.preprocessing import MinMaxScaler
+import re
 
 def getdata(file_path):
     all_data = pd.DataFrame()
@@ -20,9 +21,9 @@ def getdata(file_path):
     all_data.dropna(inplace=True)
     all_data = all_data.values
     y = all_data[:, :1]
-    X = all_data[:, 1:] 
-    #y=y/100
+    X = all_data[:, 1:]
     y= y.ravel()
+
     return X, y
 
 class GPR:
@@ -37,7 +38,7 @@ class GPR:
         '''
         self.is_fit = False
         self.train_X, self.train_y = None, None
-        self.params = {"l": 1, "sigma_f": 1, "sigma_s": 1e-2, "sigma_t": 1e-2}
+        self.params = {"l": 1, "sigma_f": 1, "sigma_s": 0.1, "sigma_t": 0.1}
         self.optimize = optimize
         self.Kyy = None
         self.weight = None
@@ -61,12 +62,11 @@ class GPR:
             self.lambda_matrix = np.diag(np.hstack((self.weight, np.ones(n_target))))
             self.params["l"], self.params["sigma_f"], self.params["sigma_s"], self.params["sigma_t"] = params[0], params[1], params[2], params[3]
             Kyy = self.kernel(self.train_X, self.train_X)
-            
             #K' = λKλ - diag(λKλ) + diag(K)
             lambda_K_lambda = self.lambda_matrix @ Kyy @ self.lambda_matrix  # λKλ
             diag_lambda_K_lambda = np.diag(np.diagonal(lambda_K_lambda))  # diag(λKλ)
             diag_K = np.diag(np.diagonal(Kyy))  # diag(K)  
-            A = np.diag(np.hstack((np.full(n_source, self.params["sigma_s"] ** 2), np.full(n_target, self.params["sigma_t"] ** 2))))  #noise
+            A = np.diag(np.hstack((np.full(n_source, self.params["sigma_s"] ** 2), np.full(n_target, self.params["sigma_t"] ** 2))))
             Kyy = lambda_K_lambda - diag_lambda_K_lambda + diag_K + A
 
             self.Kyy = Kyy
@@ -75,21 +75,19 @@ class GPR:
             loss = 0.5 * self.train_y.T.dot(alpha) + np.sum(np.log(np.diag(L))) \
             + 0.5 * len(self.train_X) * np.log(2 * np.pi)
             self.loss = loss
-
+            
             return loss
 
         if self.optimize:
             x0 = np.hstack(( [self.params["l"], self.params["sigma_f"], self.params["sigma_s"], self.params["sigma_t"]], self.weight ))
             sigma0 = 0.5
-            bounds_lower = np.hstack(( [np.log(1e-4), np.log(1e-4), 0, 0], [0]*len(self.weight) ))
+            bounds_lower = np.hstack(( [np.log(1e-4), np.log(1e-4), 0.05, 0.05], [0]*len(self.weight) ))
             bounds_upper = np.hstack(( [np.log(1e4), np.log(1e4), 1, 1], [self.weightlimit]*len(self.weight) ))
             opts = {'bounds': [bounds_lower, bounds_upper],
                     'verb_disp': 1,
                     'maxiter': 500
                     }
-            print("\n🔮 Model training...")
-            res = cma.fmin(negative_log_likelihood_loss, x0, sigma0, options=opts, restarts=3)
-            print("✅ Done!")
+            res = cma.fmin(negative_log_likelihood_loss, x0, sigma0, options=opts, restarts=0)
             best_params = res[0]
             self.params["l"] = np.exp(best_params[0])
             self.params["sigma_f"] = np.exp(best_params[1])
@@ -99,25 +97,33 @@ class GPR:
 
         self.is_fit = True
 
+
     def predict(self, X):
         if not self.is_fit:
             print("GPR Model not fit yet.")
             return
 
         X = np.asarray(X)
-        Kff = self.kernel(self.train_X, self.train_X)
+        N = len(self.train_X)
+        jitter = 1e-8
+
+        Kff = self.kernel(self.train_X, self.train_X) + jitter * np.eye(N)
         Kyy = self.kernel(X, X)
         Kfy = self.kernel(self.train_X, X)
-        Kff_inv = np.linalg.inv(Kff + 1e-8 * np.eye(len(self.train_X)))
 
-        mu = Kfy.T.dot(Kff_inv).dot(self.train_y)
-        cov = Kyy - Kfy.T.dot(Kff_inv).dot(Kfy)
+        L = np.linalg.cholesky(Kff) 
+        alpha = np.linalg.solve(L.T, np.linalg.solve(L, self.train_y)) 
+
+        mu = Kfy.T @ alpha
+
+        v = np.linalg.solve(L, Kfy)
+        cov = Kyy - v.T @ v + self.params["sigma_t"] ** 2 * np.eye(len(X))
+
         return mu, cov
 
     def kernel(self, x1, x2):
         dist_matrix = np.sum(x1**2, 1).reshape(-1, 1) + np.sum(x2**2, 1) - 2 * np.dot(x1, x2.T)
         return self.params["sigma_f"] ** 2 * np.exp(-0.5 / self.params["l"] ** 2 * dist_matrix)
-
 
 
 mpl.rcParams["font.sans-serif"] = ["SimHei"]
@@ -136,12 +142,8 @@ X2, y2 = getdata(file_path3)
 X3, y3 = getdata(file_path4)
 Xt, yt = getdata(file_path2)
 
-Xs = X1
-ys = y1
-source_train_size = 1
-target_train_size = 0.1
-
-Xs, Xs_remaining, ys, ys_remaining = train_test_split(Xs, ys, train_size=source_train_size, shuffle=False)
+Xs = X3
+ys = y3
 print(ys.shape)
 weight_limit = 1
 label = 'B0005->B0006'
@@ -158,10 +160,10 @@ yt = scaleryt.fit_transform(yt)
 ys = ys.reshape(-1)
 yt = yt.reshape(-1)
 
-Xt_train, Xt_test, yt_train, yt_test = train_test_split(Xt, yt, test_size=target_train_size, random_state=42)
 
-X_train = Xs
-y_train = ys
+test_size = 0.9
+Xt_train, Xt_test, yt_train, yt_test = train_test_split(Xt, yt, test_size=test_size, random_state=42)
+
 X_train2 = np.vstack((Xs, Xt_train))
 y_train2 = np.hstack((ys, yt_train))
 X_test = Xt_test
@@ -171,12 +173,11 @@ n_source = int(ys.shape[0])
 n_target_train = int(yt_train.shape[0])
 n_target_all = int(yt.shape[0])
 
-inital_weight = np.ones(len(ys))
-
 np.set_printoptions(suppress=True, precision=4)
 
 sw_gpr = GPR()
 sw_gpr.fit(X_train2, y_train2, n_source, n_target_train, weight_limit)
+
 best_weight = sw_gpr.weight
 optimize_K = sw_gpr.Kyy
 swpgr_test_pred, cov_test = sw_gpr.predict(X_test)
@@ -193,19 +194,44 @@ swpgr_yt_pred = scaleryt.inverse_transform(swpgr_yt_pred)
 swpgr_yt_pred = swpgr_yt_pred.reshape(-1)
 
 swgpr_RMSE = np.sqrt(mean_squared_error(yt,swpgr_yt_pred))
-swgpr_percent = (swgpr_RMSE / np.mean(yt)) * 100
 swgpr_MAE = mean_absolute_error(yt,swpgr_yt_pred)
-swgpr_MBE = np.mean(swpgr_yt_pred - yt)
-mape = np.mean(np.abs((yt - swpgr_yt_pred) / yt)) * 100
 print(f"SW-GPR RMSE:{round(swgpr_RMSE, 4)}")
 print(f"SW-GPR MAE:{round(swgpr_MAE, 4)}")
-print(f"SW-GPR MAPE:{round(mape, 4)}")
 
 window_size = 5
 def moving_average(data, window):
     return np.convolve(data, np.ones(window) / window, mode='valid')
 pred_smoothed = moving_average(swpgr_yt_pred, window_size)
 smooth_variance = np.var(pred_smoothed)
+error_smoothed = moving_average(swpgr_yt_pred - yt, window_size)
+smooth_error_variance = np.var(error_smoothed)
 print(f"SW-GPR SV: {smooth_variance:.6f}")
 
+z_score = 1.96
+cov_diag = np.maximum(np.diag(cov_test), 0.0)
+std_norm = np.sqrt(cov_diag)
+std_original = std_norm / scaleryt.scale_[0]
+pred_upper = swpgr_yt_pred + z_score * std_original
+pred_lower = swpgr_yt_pred - z_score * std_original
+R = np.max(yt) - np.min(yt)
+interval_widths = pred_upper - pred_lower
+NMPIW = np.mean(interval_widths / R)
+print(f"NMPIW: {NMPIW:.6f}")
 
+
+plt.figure(figsize=(12, 6))
+plt.plot(yt, label='True SOH', color='#1f77b4', linewidth=2)
+plt.plot(swpgr_yt_pred, label=f'{label} GPR Predicted SOH', color='#ff7f0e', linestyle='--', linewidth=2)
+plt.fill_between(range(len(yt)), pred_lower, pred_upper, 
+                 color='#ff7f0e', alpha=0.2, label='95% Confidence Interval')
+plt.xlabel('Cycle Number', fontsize=12)
+plt.ylabel('SOH', fontsize=12)
+plt.title(f'{label} GPR Battery SOH Prediction with 95% Confidence Interval', fontsize=14)
+plt.legend(fontsize=11)
+plt.grid(alpha=0.3)
+plt.show()
+
+plt.imshow(optimize_K, cmap='coolwarm')
+plt.colorbar(label='Value')
+plt.title('Matrix Visualization (High values in dark color)')
+plt.show()
